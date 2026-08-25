@@ -1,0 +1,25 @@
+---
+id: doc_009
+source: it_servicedesk_chat.txt
+type: chat
+department: IT
+title: IT Service Desk Channel Extract
+---
+[2025-04-02 08:55] wan.t: locked out again, tried 5 times
+[2025-04-02 08:56] it.somsak: thats the lockout threshold, it releases itself after 30 min. or use self service reset in the identity portal, faster
+[2025-04-02 08:57] wan.t: forgot that existed
+
+[2025-04-02 10:20] preecha.m: branch 042 terminal is dead, nobody can serve customers
+[2025-04-02 10:21] it.somsak: thats a sev 1, dont use the portal for this, call the hotline. we respond in 15 min 24x7
+[2025-04-02 10:22] preecha.m: calling now
+
+[2025-04-08 14:11] nid.k: need access to the customer data warehouse for the campaign analysis
+[2025-04-08 14:14] it.somsak: access request form + manager approval, and because its customer data infosec has to approve too. its time boxed to 12 months then you recertify
+[2025-04-08 14:15] nid.k: how long does that usually take
+[2025-04-08 14:16] it.somsak: infosec queue is a sev 3/4 thing, budget a few days
+
+[2025-04-15 09:30] fah.w: my laptop is 3 years old and the battery is dying, can i get a new one
+[2025-04-15 09:33] it.somsak: refresh is 4 years. early replacement needs evidence of failure + dept head approval. raise a ticket with the battery health screenshot, thats usually enough
+
+[2025-04-19 18:40] tee.r: left my work phone in a taxi 😖
+[2025-04-19 18:41] it.somsak: report to service desk right now and infosec within 24h. we will wipe it remotely

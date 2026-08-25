@@ -1,0 +1,25 @@
+---
+id: doc_008
+source: finance_ops_chat.txt
+type: chat
+department: Finance
+title: Finance Operations Channel Extract
+---
+[2025-02-10 13:05] boonmee.t: guys my taxi claim from december got rejected, why
+[2025-02-10 13:08] fin.nok: 30 day rule. december expense submitted in feb is out of window. you can still push it but needs written exception from the Finance Director and honestly they usually say no
+[2025-02-10 13:09] boonmee.t: fair enough
+
+[2025-02-12 09:47] pla.s: lost the receipt for a 300 baht coffee run for the client meeting
+[2025-02-12 09:50] fin.nok: under 500 you can use the Expense Declaration Form, manager signs it. cap is 2000 per person per month so dont make it a habit 🙂
+[2025-02-12 09:51] pla.s: haha understood
+
+[2025-02-18 15:30] krit.j: when does reimbursement actually land
+[2025-02-18 15:31] fin.nok: next payroll run. if approval happens after the 25th it slips to the month after. goes to your salary account only, we cant pay to another bank
+[2025-02-18 15:33] krit.j: thats why mine was late then
+
+[2025-02-21 11:02] may.c: flying to singapore for the vendor workshop, 90k all in. who approves
+[2025-02-21 11:05] fin.nok: international so line manager + dept head. finance director only kicks in above 150k. and book through the travel agent, self booked only gets reimbursed up to their quoted fare
+[2025-02-21 11:06] may.c: got it. per diem is 2000/day for intl right
+[2025-02-21 11:07] fin.nok: correct, but not for days the conference feeds you
+
+[2025-02-27 17:12] krit.j: reminder to everyone, credit card slip is NOT a receipt, finance will bounce it

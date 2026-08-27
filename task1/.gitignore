@@ -1,9 +1,0 @@
-.env
-.venv/
-__pycache__/
-*.pyc
-logs/
-data/index.pkl
-.pytest_cache/
-
-*.pdf

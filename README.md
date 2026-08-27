@@ -83,6 +83,7 @@ and writes exactly one log record. There is one pipeline, no agent loop, no tool
 | `src/agent.py` | The pipeline and its decision trace |
 | `src/logging_config.py` | JSON-lines request log |
 | `src/evaluation.py` | The evaluation set |
+| `src/calibrate.py` | Picks `RETRIEVAL_THRESHOLD` and `TOP_K` from labelled data |
 
 ### Ingestion
 
@@ -229,7 +230,7 @@ keys, no credentials, and no document content are logged.
 | `injection` | 4 | The §6 examples plus an injection embedded inside a legitimate question |
 | `no_evidence` | 4 | Real internal questions no document covers (mortgage limits, a specific tender, dress code, parking) — must fall back **and stay classified in-scope**, since each one is a content gap rather than a rejection |
 
-The unit tests (`pytest`, 65 tests) cover the same boundaries deterministically with the
+The unit tests (`pytest`, 72 tests) cover the same boundaries deterministically with the
 LLM and embedding calls mocked, so no test needs a key or a network:
 
 - injection detected / benign query not flagged (15 cases)
@@ -241,6 +242,42 @@ LLM and embedding calls mocked, so no test needs a key or a network:
 - fallback on model-reported insufficient context, and on an uncited answer
 - provider exception contained and logged
 - the log record contains every required field
+
+### Calibrating the threshold
+
+`RETRIEVAL_THRESHOLD` and `TOP_K` are currently guesses. `src/calibrate.py` replaces
+them with measurements:
+
+```bash
+python -m src.calibrate                    # needs a key
+python -m src.calibrate --target-far 0.02  # allow a 2% false-answer rate
+```
+
+It reads `data/calibration_set.json` — questions the corpus provably answers, each
+labelled with the documents that answer them, and questions it provably does not — and
+reports:
+
+- the two score distributions side by side, and how far they overlap
+- what every candidate threshold costs in **both** directions: answerable questions
+  refused, and unanswerable questions wrongly answered
+- the lowest threshold that keeps false answers under target (lowest, because every step
+  above it refuses more answerable questions for no further gain)
+- `Recall@k`, to choose `TOP_K` at the point where extra chunks stop earning their tokens
+- the questions never retrieved at all, which are retrieval failures rather than
+  threshold problems
+
+The threshold is a business decision, not a mathematical optimum: too low and the system
+answers from irrelevant documents, which the user cannot detect; too high and it refuses
+questions it could have answered, which the user can. The script makes the trade explicit
+rather than choosing for you.
+
+If meeting the false-answer target costs more than 20% of answerable questions, it says
+so — that means the two groups overlap too much and the threshold is not the problem.
+The fix is then chunk size, overlap, a multilingual embedding model, or hybrid BM25 +
+vector search.
+
+The starter set is 24 answerable and 12 unanswerable questions. Expand it to 50–100 of
+each, owned by the SMEs for each domain, before trusting the numbers.
 
 ## 6. Limitations
 
@@ -267,9 +304,10 @@ LLM and embedding calls mocked, so no test needs a key or a network:
   for a rise in `model_reported_insufficient_context` fallbacks; the right fix is larger
   chunks, more overlap, or pulling the neighbours of a qualifying chunk — not a second,
   lower threshold.
-- **The evidence threshold is hand-set, not tuned on data.** The default (0.32) is a
-  reasonable starting point for `text-embedding-3-small`; it should be re-tuned against
-  a labelled set before anyone relies on it. See "Verification status".
+- **The evidence threshold and `TOP_K` are still hand-set.** `python -m src.calibrate`
+  replaces both with measurements, but it has only ever been run against the offline
+  stub, whose score scale is not the real model's. Both remain guesses until it is run
+  with a key. See "Verification status".
 - **No conversation memory.** Each query is independent; follow-ups like "and for
   managers?" will not resolve.
 - **Prototype-level everything else**: no authentication, no authorisation or
@@ -335,7 +373,7 @@ Other flags and knobs: `python main.py --rebuild` re-ingests and re-embeds;
 
 Honest accounting of what has actually been run:
 
-- ✅ `pytest -q` — 65 passed. Covers every routing decision with the provider mocked.
+- ✅ `pytest -q` — 72 passed. Covers every routing decision with the provider mocked.
 - ✅ `python -m src.evaluation --offline` — 11/11 asserted cases pass (injection and
   request-form scope, both languages). Retrieval-dependent cases are printed as informational, because
   the lexical stub cannot reproduce semantic similarity; it ranks reasonably but its

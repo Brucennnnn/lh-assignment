@@ -7,6 +7,14 @@ covered by the corpus.
 
 Scope is the prototype described in `TASK.md`. It is not production software.
 
+**Take-home deliverables**
+
+| Task | Deliverable |
+|---|---|
+| 1 — Technical implementation | This repository (see below) |
+| 2 — System design & trade-off analysis | [`docs/architecture.md`](docs/architecture.md) |
+| 3 — User scenario & expectation management | [`docs/executive-summary.md`](docs/executive-summary.md) |
+
 ---
 
 ## 1. Problem

@@ -8,7 +8,7 @@ from tests.conftest import CHUNK_A, CHUNK_B
 
 
 @pytest.fixture
-def bot(store, monkeypatch, tmp_path):
+def bot(store, monkeypatch, tmp_path, stub_embed, in_domain):
     monkeypatch.setattr("src.config.LOG_PATH", tmp_path / "rag.jsonl")
     monkeypatch.setattr("src.logging_config._logger", None)
     return agent_mod.Agent(store)
@@ -34,7 +34,7 @@ def test_injection_blocked_before_retrieval(bot, monkeypatch):
     assert out["trace"]["injection_detected"] is True
 
 
-def test_out_of_scope_rejected_before_retrieval(bot, monkeypatch):
+def test_wrong_request_form_rejected_before_retrieval(bot, monkeypatch):
     monkeypatch.setattr("src.retrieval.retrieve",
                         lambda *a, **k: pytest.fail("retrieval must not run"))
     out = bot.answer("What's the weather tomorrow?")
@@ -42,21 +42,45 @@ def test_out_of_scope_rejected_before_retrieval(bot, monkeypatch):
     assert out["trace"]["scope_reason"] == "weather"
 
 
-def test_unrelated_query_out_of_scope_after_retrieval(bot, monkeypatch):
-    stub_retrieval(monkeypatch, score=0.05)
-    out = bot.answer("What is the maximum mortgage a branch manager can approve?")
+def test_off_topic_rejected_before_retrieval(bot, monkeypatch, off_domain):
+    monkeypatch.setattr("src.retrieval.retrieve",
+                        lambda *a, **k: pytest.fail("retrieval must not run"))
+    out = bot.answer("How do I train a machine learning model?")
     assert out["status"] == OUT_OF_SCOPE
-    assert out["trace"]["scope_reason"] == "no_related_content"
+    assert out["trace"]["scope_reason"] == "outside_covered_domains"
 
 
-def test_low_confidence_triggers_fallback(bot, monkeypatch):
-    stub_retrieval(monkeypatch, score=0.25)  # between scope and retrieval thresholds
+def test_uncovered_company_question_is_in_scope_and_falls_back(bot, monkeypatch):
+    """The decision this whole split exists for: a real company question with no
+    document behind it must NOT be called out of scope."""
+    stub_retrieval(monkeypatch, score=0.05)
+    monkeypatch.setattr("src.llm.complete",
+                        lambda *a, **k: pytest.fail("generation must not run"))
+    out = bot.answer("What is the maximum mortgage a branch manager can approve?")
+    assert out["status"] == FALLBACK
+    assert out["trace"]["scope"] == "in_scope"
+    assert out["trace"]["fallback_reason"] == "no_evidence_in_corpus"
+    assert out["answer"] == generation.FALLBACK_MESSAGE
+
+
+def test_missing_evidence_is_logged_as_a_content_gap(bot, monkeypatch):
+    stub_retrieval(monkeypatch, score=0.05)
+    trace = bot.answer("Where do I park at the head office?")["trace"]
+    assert trace["content_gap"] is True
+    assert trace["query"] == "Where do I park at the head office?"
+
+
+def test_out_of_scope_is_not_a_content_gap(bot, monkeypatch, off_domain):
+    trace = bot.answer("How do I train a machine learning model?")["trace"]
+    assert trace["content_gap"] is False
+
+
+def test_weak_evidence_triggers_fallback(bot, monkeypatch):
+    stub_retrieval(monkeypatch, score=0.25)  # below RETRIEVAL_THRESHOLD
     monkeypatch.setattr("src.llm.complete",
                         lambda *a, **k: pytest.fail("generation must not run"))
     out = bot.answer("What is the parental leave entitlement?")
     assert out["status"] == FALLBACK
-    assert out["answer"] == generation.FALLBACK_MESSAGE
-    assert out["trace"]["fallback_reason"] == "retrieval_below_threshold"
     assert out["sources"] == []
 
 
@@ -115,13 +139,14 @@ def test_trace_contains_required_log_fields(bot, monkeypatch):
     stub_llm(monkeypatch, "Twelve days. [1]")
     trace = bot.answer("What is the annual leave entitlement?")["trace"]
     for field in ("request_id", "timestamp", "query", "injection_detected", "scope",
-                  "retrieved_sources", "retrieval_scores", "retrieval_confidence",
-                  "fallback", "generation_status", "latency_ms", "status"):
+                  "content_gap", "retrieved_sources", "retrieval_scores",
+                  "retrieval_confidence", "fallback", "generation_status",
+                  "latency_ms", "status"):
         assert field in trace
     assert trace["retrieved_sources"] == ["leave_policy.md", "expense_policy.md"]
 
 
-def test_generation_prompt_contains_context_and_question(monkeypatch):
+def test_generation_prompt_contains_context_and_question():
     prompt = generation.build_prompt("How much leave?", [{**CHUNK_A, "score": 0.8}])
     assert "[1]" in prompt and CHUNK_A["content"] in prompt
     assert "How much leave?" in prompt

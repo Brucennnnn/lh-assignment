@@ -1,12 +1,17 @@
 """The pipeline. Every stage can end the request; every ending is logged.
 
-query -> injection guard -> scope precheck -> retrieval -> confidence
-      -> generation -> grounding check -> answer + sources
+query -> injection guard -> scope (request form, then topic) -> retrieval
+      -> evidence check -> generation -> grounding check -> answer + sources
+
+Scope is settled before retrieval and without consulting the corpus, so
+"we don't answer that" and "nobody has written that down yet" stay separate
+outcomes. The second is logged as a content gap; the list of those is the
+knowledge base's to-do list.
 """
 import time
 import uuid
 
-from . import generation, guardrails, ingestion, logging_config, retrieval, scope
+from . import generation, guardrails, ingestion, llm, logging_config, retrieval, scope
 
 # Statuses returned to the caller.
 ANSWERED = "answered"
@@ -28,6 +33,7 @@ class Agent:
             "query": query,
             "injection_detected": False,
             "scope": None,
+            "content_gap": False,
             "retrieved_sources": [],
             "retrieval_scores": [],
             "retrieval_confidence": None,
@@ -66,6 +72,7 @@ class Agent:
             record["status"] = BLOCKED_INJECTION
             return {"answer": guardrails.REJECTION_MESSAGE}
 
+        # Scope, both halves, before the corpus is touched.
         reason = scope.precheck(query)
         if reason:
             record["scope"] = "out_of_scope"
@@ -73,12 +80,10 @@ class Agent:
             record["status"] = OUT_OF_SCOPE
             return {"answer": scope.REJECTION_MESSAGE}
 
-        results = retrieval.retrieve(self.store, query)
-        record["retrieved_sources"] = [r["source"] for r in results]
-        record["retrieval_scores"] = [r["score"] for r in results]
-        record["retrieval_confidence"] = retrieval.confidence(results)
+        # One embedding call, used for the topic check and then for retrieval.
+        query_vector = llm.embed([query])[0]
 
-        reason = scope.classify_by_score(record["retrieval_confidence"])
+        reason = scope.classify_domain(query_vector)
         if reason:
             record["scope"] = "out_of_scope"
             record["scope_reason"] = reason
@@ -86,9 +91,17 @@ class Agent:
             return {"answer": scope.REJECTION_MESSAGE}
         record["scope"] = "in_scope"
 
-        if not retrieval.is_confident(results):
+        results = retrieval.retrieve(self.store, query_vector)
+        record["retrieved_sources"] = [r["source"] for r in results]
+        record["retrieval_scores"] = [r["score"] for r in results]
+        record["retrieval_confidence"] = retrieval.confidence(results)
+
+        if not retrieval.has_evidence(results):
+            # In scope, but the corpus does not cover it. Not the user's mistake
+            # and not a rejection - a gap in the knowledge base, recorded as one.
             record["fallback"] = True
-            record["fallback_reason"] = "retrieval_below_threshold"
+            record["fallback_reason"] = "no_evidence_in_corpus"
+            record["content_gap"] = True
             record["status"] = FALLBACK
             return {"answer": generation.FALLBACK_MESSAGE}
 

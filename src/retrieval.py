@@ -1,23 +1,24 @@
 """Semantic retrieval over the vector store, metadata preserved end to end."""
-from . import config, llm
+import numpy as np
+
+from . import config
 from .store import VectorStore
 
 
-def retrieve(store: VectorStore, query: str, k: int | None = None) -> list[dict]:
+def retrieve(store: VectorStore, query_vector: np.ndarray, k: int | None = None) -> list[dict]:
     """Return the top-k chunks with their cosine score, source and metadata."""
-    query_vector = llm.embed([query])[0]
     return store.search(query_vector, k or config.TOP_K)
 
 
 def confidence(results: list[dict]) -> float:
-    """Retrieval confidence = similarity of the best-matching chunk.
+    """Evidence strength = similarity of the best-matching chunk.
 
-    Heuristic and retrieval-based, not a calibrated probability. It answers
-    "did we find anything that looks like the question" - which is the failure
-    mode we care about - not "is the generated answer correct".
+    Answers "do we hold a document that covers this question", which is a
+    question about the corpus - never about whether the question was in scope.
+    Heuristic and retrieval-based, not a calibrated probability.
     """
     return results[0]["score"] if results else 0.0
 
 
-def is_confident(results: list[dict]) -> bool:
+def has_evidence(results: list[dict]) -> bool:
     return confidence(results) >= config.RETRIEVAL_THRESHOLD

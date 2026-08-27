@@ -41,15 +41,19 @@ Input validation           empty / whitespace -> error
 Injection guardrail        guardrails.detect_injection()  -- pattern match on the query
     |                      match -> "I can't help with requests to reveal or override..."
     v
-Scope precheck             scope.precheck()               -- deny-list, before retrieval
+Scope: request form        scope.precheck()               -- regex, no corpus, no API call
     |                      match -> "This question is outside the scope..."
+    v
+Scope: topic               scope.classify_domain()        -- nearest-centroid vs the
+    |                      written remit; still no corpus
+    |                      off-topic -> "This question is outside the scope..."
     v
 Retrieval                  retrieval.retrieve()           -- cosine top-k + metadata
     |
     v
-Confidence banding         top-1 cosine score
-    |                      < SCOPE_THRESHOLD     -> out-of-scope rejection
-    |                      < RETRIEVAL_THRESHOLD -> safe fallback
+Evidence check             top-1 cosine score
+    |                      < RETRIEVAL_THRESHOLD -> safe fallback, logged as a
+    |                      content gap (in scope, nothing written down)
     v
 Generation                 generation.generate()          -- context-only prompt
     |
@@ -74,7 +78,7 @@ and writes exactly one log record. There is one pipeline, no agent loop, no tool
 | `src/store.py` | In-memory vector store (numpy matrix + dot product) |
 | `src/retrieval.py` | Top-k search, confidence score, threshold check |
 | `src/guardrails.py` | Prompt-injection patterns |
-| `src/scope.py` | Deny-list precheck + score-based scope check |
+| `src/scope.py` | Scope: request-form regex + topic centroids. Never reads the corpus |
 | `src/generation.py` | Grounded prompt, grounding check, citation extraction |
 | `src/agent.py` | The pipeline and its decision trace |
 | `src/logging_config.py` | JSON-lines request log |
@@ -138,25 +142,47 @@ substring. Additionally, the system prompt tells the model that context passages
 reference material, not instructions, which is the second line of defence for injection
 text living inside a *document* rather than the query.
 
-**Out of scope.** Two checks, deliberately split:
-- Before retrieval, a deny-list for request *types* that are never internal knowledge
-  lookups: weather, sports results, creative writing, market prices, general trivia.
-  This runs first because "write me a poem about the expense policy" would otherwise
-  retrieve very well.
-- After retrieval, if the best chunk scores below `SCOPE_THRESHOLD`, nothing in the
-  corpus is even loosely related, so the question is out of scope regardless of wording.
-  This is what catches plausible-sounding questions the corpus simply does not cover.
+**Out of scope.** Scope is a property of the assistant's remit, not of the index.
+Nothing in `src/scope.py` reads the corpus, and there is a test asserting it never
+starts to. Two checks, both before retrieval:
+- **Wrong request form** - a regex deny-list, in Thai and English, for request *types*
+  that are never internal knowledge lookups: weather, sports results, creative writing,
+  market prices, trivia. This has to run first because "write me a poem about the
+  expense policy" is on-topic and would retrieve very well.
+- **Wrong topic** - nearest-centroid between the domains the company has decided this
+  assistant covers (`COVERED_DOMAINS`) and a set of off-domain examples. Relative, so
+  there is no threshold to calibrate, and it handles paraphrase and Thai, which a
+  keyword list cannot.
 
-**Retrieval threshold and fallback.** The top-1 cosine score is banded:
+`COVERED_DOMAINS` is a written remit that changes when the remit changes. It is
+deliberately *not* derived from `data/`, so adding a document never silently widens
+the scope, and removing one never narrows it.
+
+**Evidence threshold and fallback.** After retrieval, one score-based decision:
 
 | Band | Decision |
 |---|---|
-| `score < SCOPE_THRESHOLD` (0.20) | Out-of-scope rejection |
-| `SCOPE_THRESHOLD <= score < RETRIEVAL_THRESHOLD` (0.32) | Safe fallback, no LLM call |
-| `score >= RETRIEVAL_THRESHOLD` | Generate |
+| `top-1 score < RETRIEVAL_THRESHOLD` (0.32) | Safe fallback, no LLM call, logged as a content gap |
+| `top-1 score >= RETRIEVAL_THRESHOLD` | Generate |
 
-Both live in `src/config.py` and are overridable by environment variable. Nothing else
-in the codebase hardcodes a threshold.
+This is the only threshold in the system, it lives in `src/config.py`, and nothing else
+in the codebase hardcodes one.
+
+**Why scope and coverage are separate decisions.** "Where do I park?" is a company
+question whether or not anyone has uploaded the parking policy. Deciding scope from
+retrieval scores would tell that user their question is outside company knowledge -
+false, and it teaches them not to ask again. It would also make scope
+non-deterministic: re-index, and the same question changes classification, which
+makes it impossible to write a stable test for. Worst of all it is circular - if the
+corpus defines the scope, the corpus can never be found incomplete.
+
+Kept separate, the in-scope-but-unanswerable queries become the most useful output the
+system produces: the list of documents the company still needs to write. Every one is
+logged with `"content_gap": true`:
+
+```bash
+grep '"content_gap": true' logs/rag.jsonl | jq -r .query | sort | uniq -c | sort -rn
+```
 
 **Grounding.** Generation is instructed to answer only from the numbered passages, to
 emit the literal token `INSUFFICIENT_CONTEXT` when they do not contain the answer, and
@@ -185,18 +211,16 @@ keys, no credentials, and no document content are logged.
 | Category | Cases | Demonstrates |
 |---|---|---|
 | `in_scope` | 6 | Retrieval + grounded generation + attribution across HR, Finance, IT and Procurement, including one answer that must come from chat-style content |
-| `out_of_scope` | 5 | The §7 examples plus "write me a poem about the expense policy", which the deny-list must catch even though it retrieves well |
+| `out_of_scope` | 7 | The §7 examples, two Thai equivalents, and "write me a poem about the expense policy" — which the deny-list must catch even though it retrieves well |
 | `injection` | 4 | The §6 examples plus an injection embedded inside a legitimate question |
-| `low_confidence` | 3 | Plausible internal questions the corpus does not cover (mortgage limits, a specific tender, dress code) — must refuse, never invent |
+| `no_evidence` | 4 | Real internal questions no document covers (mortgage limits, a specific tender, dress code, parking) — must fall back **and stay classified in-scope**, since each one is a content gap rather than a rejection |
 
-Low-confidence cases accept either `fallback` or `out_of_scope`: both decline safely and
-neither fabricates content. Which one fires depends on how close the corpus happens to be.
-
-The unit tests (`pytest`, 50 tests) cover the same boundaries deterministically with the
+The unit tests (`pytest`, 61 tests) cover the same boundaries deterministically with the
 LLM and embedding calls mocked, so no test needs a key or a network:
 
 - injection detected / benign query not flagged (15 cases)
-- deny-list scope rejection and score-based scope rejection
+- scope by request form and by topic, in Thai and English
+- an uncovered company question staying in scope and falling back as a content gap
 - retrieval ranking, score exactness, metadata preservation, top-k
 - above/below the retrieval threshold
 - successful answer with attribution, and attribution limited to cited sources only
@@ -213,17 +237,18 @@ LLM and embedding calls mocked, so no test needs a key or a network:
   started"), non-English phrasing, base64 or unicode obfuscation, or multi-turn
   manipulation. A production system would combine patterns with a classifier and
   privilege separation, and would treat the document corpus itself as untrusted input.
-- **Out-of-scope detection is a deny-list plus a similarity floor.** A creative-writing
-  request phrased unusually will pass the deny-list and then be caught (or not) only by
-  the similarity floor.
+- **Out-of-scope detection is a regex deny-list plus nearest-centroid topic matching.**
+  A creative-writing request phrased unusually passes the deny-list and then depends on
+  the topic centroids, which are short hand-written descriptions rather than trained
+  boundaries.
 - **Confidence is a heuristic**, not a calibrated probability: it is the top-1 cosine
   similarity, which measures "does the corpus contain something that looks like this
   question", not "is this answer correct".
 - **Grounding is citation-presence, not entailment.** A model that cites `[1]` while
   misstating what `[1]` says is not caught. An NLI or LLM-judge check is the upgrade path.
-- **Thresholds are hand-set, not tuned on data.** The defaults (0.20 / 0.32) are
-  reasonable starting points for `text-embedding-3-small`; they should be re-tuned
-  against a labelled set before anyone relies on them. See "Verification status".
+- **The evidence threshold is hand-set, not tuned on data.** The default (0.32) is a
+  reasonable starting point for `text-embedding-3-small`; it should be re-tuned against
+  a labelled set before anyone relies on it. See "Verification status".
 - **No conversation memory.** Each query is independent; follow-ups like "and for
   managers?" will not resolve.
 - **Prototype-level everything else**: no authentication, no authorisation or
@@ -289,9 +314,9 @@ Other flags and knobs: `python main.py --rebuild` re-ingests and re-embeds;
 
 Honest accounting of what has actually been run:
 
-- ✅ `pytest -q` — 50 passed. Covers every routing decision with the provider mocked.
-- ✅ `python -m src.evaluation --offline` — 9/9 asserted cases pass (injection and
-  deny-list scope). Retrieval-dependent cases are printed as informational, because
+- ✅ `pytest -q` — 61 passed. Covers every routing decision with the provider mocked.
+- ✅ `python -m src.evaluation --offline` — 11/11 asserted cases pass (injection and
+  request-form scope, both languages). Retrieval-dependent cases are printed as informational, because
   the lexical stub cannot reproduce semantic similarity; it ranks reasonably but its
   score scale is compressed, so it refuses in-scope questions too.
 - ✅ `python main.py --offline` — interactive loop, logging, and all three refusal
@@ -299,8 +324,8 @@ Honest accounting of what has actually been run:
 - ⚠️ **The live OpenAI path has not been executed** — no API key was available in the
   development environment. The generation prompt, grounding check and the 0.20 / 0.32
   thresholds are reasoned, not measured. First run with a real key: check
-  `python -m src.evaluation` and adjust `SCOPE_THRESHOLD` / `RETRIEVAL_THRESHOLD` in
-  `.env` against the printed confidence column.
+  `python -m src.evaluation` and adjust `RETRIEVAL_THRESHOLD` in `.env` against the
+  printed confidence column.
 
 ---
 
@@ -314,14 +339,15 @@ prototype and is not real LH Bank policy. The corpus is treated as trusted and e
 readable by everyone.
 
 **Decisions taken where the task was open:**
-1. Scope detection is split around retrieval (deny-list before, similarity floor after)
-   rather than sitting entirely before it as the §1 diagram shows. A pure pre-retrieval
-   check cannot know whether the corpus covers a topic; a pure post-retrieval check
-   cannot catch "write me a poem about the expense policy". Both were needed.
-2. Confidence is the top-1 score, not a mean of top-k. A mean is dragged down by the
+1. Scope is decided entirely before retrieval and without reading the corpus, matching
+   the §1 diagram. Scope (§7) and evidence (§8) are treated as genuinely different
+   questions: "should this assistant answer this?" and "do we hold a document that
+   does?" See "Why scope and coverage are separate decisions" above.
+2. The topic check is nearest-centroid rather than a threshold, so it needs no
+   calibration and degrades predictably. The trade-off is that it can only be as good
+   as the hand-written domain descriptions.
+3. Confidence is the top-1 score, not a mean of top-k. A mean is dragged down by the
    weak tail of every result set; one strongly-matching chunk is enough to answer from.
-3. Low-confidence questions may end in either `out_of_scope` or `fallback`. They are
-   the same class of safe refusal separated only by degree.
 4. An offline stub provider was added so tests and a smoke demo run with no key. It is
    confined to `src/llm.py` and never used by the default path.
 5. Documents carry their metadata in `---` front matter rather than a separate manifest,

@@ -1,0 +1,50 @@
+{
+  "_comment": "Labelled questions for calibrating RETRIEVAL_THRESHOLD and TOP_K. Owned by the SMEs for each domain, not by engineering. A starter set - expand to 50-100 of each before trusting the numbers it produces. 'sources' lists the documents that legitimately answer the question; a positive counts as retrieved if a chunk from any of them is returned.",
+
+  "positives": [
+    {"question": "What is the annual leave entitlement?", "sources": ["leave_policy.md", "hr_helpdesk_chat.txt"]},
+    {"question": "How many leave days can I carry over to next year?", "sources": ["leave_policy.md", "hr_helpdesk_chat.txt"]},
+    {"question": "Do I need a doctor's note for two days of sick leave?", "sources": ["leave_policy.md", "hr_helpdesk_chat.txt"]},
+    {"question": "Who approves leave of more than three days?", "sources": ["leave_policy.md", "hr_helpdesk_chat.txt"]},
+
+    {"question": "How do I request reimbursement?", "sources": ["expense_policy.md"]},
+    {"question": "How long do I have to submit an expense claim?", "sources": ["expense_policy.md", "finance_ops_chat.txt"]},
+    {"question": "Is a credit card slip enough for an expense claim?", "sources": ["expense_policy.md", "finance_ops_chat.txt"]},
+    {"question": "What can I do if I lost the receipt for a small expense?", "sources": ["expense_policy.md", "finance_ops_chat.txt"]},
+
+    {"question": "What is the travel expense approval process?", "sources": ["travel_policy.md", "finance_ops_chat.txt"]},
+    {"question": "Who approves international travel costing 90,000 THB?", "sources": ["travel_policy.md", "finance_ops_chat.txt"]},
+    {"question": "What is the per diem for international travel?", "sources": ["travel_policy.md", "finance_ops_chat.txt"]},
+    {"question": "When can I fly business class?", "sources": ["travel_policy.md"]},
+
+    {"question": "How many quotations do I need for a 200,000 THB purchase?", "sources": ["procurement_policy.md"]},
+    {"question": "Can work start before a purchase order is issued?", "sources": ["procurement_policy.md"]},
+    {"question": "How long does new vendor onboarding take?", "sources": ["procurement_policy.md"]},
+
+    {"question": "How do I reset my password if my account is locked?", "sources": ["it_support_policy.md", "it_servicedesk_chat.txt"]},
+    {"question": "How quickly is a branch outage responded to?", "sources": ["it_support_policy.md", "it_servicedesk_chat.txt"]},
+    {"question": "Can I get a new laptop before the refresh cycle?", "sources": ["it_support_policy.md", "it_servicedesk_chat.txt"]},
+    {"question": "What do I do if I lose my work phone?", "sources": ["it_support_policy.md", "it_servicedesk_chat.txt"]},
+    {"question": "How do I get access to customer data?", "sources": ["it_support_policy.md", "it_servicedesk_chat.txt"]},
+
+    {"question": "What should a new employee do during onboarding?", "sources": ["onboarding_policy.md"]},
+    {"question": "How long is the probation period?", "sources": ["onboarding_policy.md", "hr_helpdesk_chat.txt"]},
+    {"question": "When must I enrol in the health insurance scheme?", "sources": ["onboarding_policy.md"]},
+    {"question": "Which mandatory training must I finish in my first week?", "sources": ["onboarding_policy.md"]}
+  ],
+
+  "negatives": [
+    "What is the maximum mortgage a branch manager can approve?",
+    "Where do I park at the head office?",
+    "What is the dress code on Fridays?",
+    "Which vendor won the Chiang Mai data centre migration tender?",
+    "How many days of paternity leave do fathers get?",
+    "How do I enrol in the employee stock option plan?",
+    "What is the overtime pay rate for weekend work?",
+    "Am I eligible for a company car?",
+    "How much does the company contribute to the provident fund?",
+    "What is the retirement age?",
+    "Can I work from abroad for a month?",
+    "What is the policy on accepting gifts from customers?"
+  ]
+}

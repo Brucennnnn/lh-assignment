@@ -34,6 +34,7 @@ class Agent:
             "injection_detected": False,
             "scope": None,
             "content_gap": False,
+            "support_count": 0,
             "retrieved_sources": [],
             "retrieval_scores": [],
             "retrieval_confidence": None,
@@ -96,7 +97,12 @@ class Agent:
         record["retrieval_scores"] = [r["score"] for r in results]
         record["retrieval_confidence"] = retrieval.confidence(results)
 
-        if not retrieval.has_evidence(results):
+        # Only chunks that clear the threshold reach the model. Everything below
+        # it is noise the model cannot distinguish from evidence, and would cite.
+        evidence = retrieval.qualifying(results)
+        record["support_count"] = len(evidence)
+
+        if not evidence:
             # In scope, but the corpus does not cover it. Not the user's mistake
             # and not a rejection - a gap in the knowledge base, recorded as one.
             record["fallback"] = True
@@ -105,7 +111,7 @@ class Agent:
             record["status"] = FALLBACK
             return {"answer": generation.FALLBACK_MESSAGE}
 
-        answer, failure = generation.generate(query, results)
+        answer, failure = generation.generate(query, evidence)
         if failure:
             record["fallback"] = True
             record["fallback_reason"] = failure
@@ -115,6 +121,6 @@ class Agent:
 
         record["generation_status"] = "ok"
         record["status"] = ANSWERED
-        sources = generation.cited_sources(answer, results)
+        sources = generation.cited_sources(answer, evidence)
         record["cited_sources"] = [s["source"] for s in sources]
         return {"answer": answer, "sources": sources}

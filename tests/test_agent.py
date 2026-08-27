@@ -84,6 +84,38 @@ def test_weak_evidence_triggers_fallback(bot, monkeypatch):
     assert out["sources"] == []
 
 
+def test_noise_below_threshold_is_never_shown_to_the_model(bot, monkeypatch):
+    """Top-4 of 0.32 / 0.01 / 0.01 / 0.01: only the qualifying chunk is passed,
+    so there is no junk passage left for the model to cite."""
+    weak = [{**CHUNK_A, "score": 0.32}] + [{**CHUNK_B, "score": 0.01} for _ in range(3)]
+    monkeypatch.setattr("src.retrieval.retrieve", lambda *a, **k: weak)
+
+    seen = {}
+
+    def capture(system, user):
+        seen["prompt"] = user
+        return "Twelve days. [1]"
+    monkeypatch.setattr("src.llm.complete", capture)
+
+    out = bot.answer("What is the annual leave entitlement?")
+    assert out["status"] == ANSWERED
+    assert out["trace"]["support_count"] == 1
+    assert "[2]" not in seen["prompt"]                       # noise never rendered
+    assert out["trace"]["retrieval_scores"] == [0.32, 0.01, 0.01, 0.01]   # log keeps them
+    assert [s["source"] for s in out["sources"]] == ["leave_policy.md"]
+
+
+def test_all_chunks_weak_falls_back(bot, monkeypatch):
+    weak = [{**CHUNK_A, "score": 0.31}, {**CHUNK_B, "score": 0.30}]
+    monkeypatch.setattr("src.retrieval.retrieve", lambda *a, **k: weak)
+    monkeypatch.setattr("src.llm.complete",
+                        lambda *a, **k: pytest.fail("generation must not run"))
+    out = bot.answer("What is the parental leave entitlement?")
+    assert out["status"] == FALLBACK
+    assert out["trace"]["support_count"] == 0
+    assert out["trace"]["retrieval_confidence"] == 0.31      # near-miss still logged
+
+
 def test_successful_answer_with_source_attribution(bot, monkeypatch):
     stub_retrieval(monkeypatch, score=0.81)
     stub_llm(monkeypatch, "Employees get 12 days of annual leave. [1]")
@@ -139,7 +171,7 @@ def test_trace_contains_required_log_fields(bot, monkeypatch):
     stub_llm(monkeypatch, "Twelve days. [1]")
     trace = bot.answer("What is the annual leave entitlement?")["trace"]
     for field in ("request_id", "timestamp", "query", "injection_detected", "scope",
-                  "content_gap", "retrieved_sources", "retrieval_scores",
+                  "content_gap", "support_count", "retrieved_sources", "retrieval_scores",
                   "retrieval_confidence", "fallback", "generation_status",
                   "latency_ms", "status"):
         assert field in trace

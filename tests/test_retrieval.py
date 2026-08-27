@@ -26,13 +26,25 @@ def test_confidence_is_top_score(store, query_vector):
     assert retrieval.confidence(results) == 0.5
 
 
-def test_evidence_above_threshold(store, query_vector):
-    assert retrieval.has_evidence(retrieval.retrieve(store, query_vector(0.0), k=2))
+def test_qualifying_keeps_chunks_above_threshold(store, query_vector):
+    results = retrieval.retrieve(store, query_vector(0.0), k=2)
+    assert [r["score"] for r in results] == [1.0, 0.0]      # raw top-k, unfiltered
+    assert [r["score"] for r in retrieval.qualifying(results)] == [1.0]
 
 
-def test_no_evidence_below_threshold(store, query_vector):
+def test_qualifying_empty_below_threshold(store, query_vector):
     angle = float(np.arccos(config.RETRIEVAL_THRESHOLD - 0.05))
-    assert not retrieval.has_evidence(retrieval.retrieve(store, query_vector(angle), k=2))
+    assert retrieval.qualifying(retrieval.retrieve(store, query_vector(angle), k=2)) == []
+
+
+def test_weak_chunks_never_reach_the_model(store, query_vector):
+    """The 0.32 / 0.01 / 0.01 case: one chunk qualifies, the noise is dropped."""
+    results = [{"score": 0.32}, {"score": 0.01}, {"score": 0.01}, {"score": 0.01}]
+    assert retrieval.qualifying(results) == [{"score": 0.32}]
+
+
+def test_threshold_is_inclusive(store):
+    assert retrieval.qualifying([{"score": config.RETRIEVAL_THRESHOLD}]) != []
 
 
 def test_confidence_of_empty_results_is_zero():

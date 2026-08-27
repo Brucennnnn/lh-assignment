@@ -158,12 +158,26 @@ starts to. Two checks, both before retrieval:
 deliberately *not* derived from `data/`, so adding a document never silently widens
 the scope, and removing one never narrows it.
 
-**Evidence threshold and fallback.** After retrieval, one score-based decision:
+**Evidence threshold and fallback.** One number with one meaning, applied **per chunk**:
+`RETRIEVAL_THRESHOLD` (0.32) is the bar for "strong enough to answer from".
 
-| Band | Decision |
+| Situation | Decision |
 |---|---|
-| `top-1 score < RETRIEVAL_THRESHOLD` (0.32) | Safe fallback, no LLM call, logged as a content gap |
-| `top-1 score >= RETRIEVAL_THRESHOLD` | Generate |
+| No chunk clears the threshold | Safe fallback, no LLM call, logged as a content gap |
+| Some chunks clear it | Generate — **from those chunks only** |
+
+`TOP_K` is a maximum, not a quota. A chunk too weak to justify answering is also too
+weak to inform the answer, so it never reaches the prompt. This matters more than it
+sounds: given top-4 scores of `0.32 / 0.01 / 0.01 / 0.01`, passing all four would render
+three pieces of noise as `[2] [3] [4]` with exactly the same authority as `[1]` — the
+model cannot tell them apart, and the grounding check cannot either, since citing junk
+satisfies "did it cite something". Filtering first means there is no junk left to cite.
+`tests/test_agent.py::test_noise_below_threshold_is_never_shown_to_the_model` pins it.
+
+The full unfiltered top-k is still logged, so near-misses stay visible for tuning, and
+`support_count` records how many chunks actually backed the answer — a single-source
+answer sitting on the threshold is the first thing to look at when a bad answer is
+reported.
 
 This is the only threshold in the system, it lives in `src/config.py`, and nothing else
 in the codebase hardcodes one.
@@ -215,14 +229,14 @@ keys, no credentials, and no document content are logged.
 | `injection` | 4 | The §6 examples plus an injection embedded inside a legitimate question |
 | `no_evidence` | 4 | Real internal questions no document covers (mortgage limits, a specific tender, dress code, parking) — must fall back **and stay classified in-scope**, since each one is a content gap rather than a rejection |
 
-The unit tests (`pytest`, 61 tests) cover the same boundaries deterministically with the
+The unit tests (`pytest`, 65 tests) cover the same boundaries deterministically with the
 LLM and embedding calls mocked, so no test needs a key or a network:
 
 - injection detected / benign query not flagged (15 cases)
 - scope by request form and by topic, in Thai and English
 - an uncovered company question staying in scope and falling back as a content gap
 - retrieval ranking, score exactness, metadata preservation, top-k
-- above/below the retrieval threshold
+- above/below the retrieval threshold, and per-chunk filtering of weak context
 - successful answer with attribution, and attribution limited to cited sources only
 - fallback on model-reported insufficient context, and on an uncited answer
 - provider exception contained and logged
@@ -246,6 +260,13 @@ LLM and embedding calls mocked, so no test needs a key or a network:
   question", not "is this answer correct".
 - **Grounding is citation-presence, not entailment.** A model that cites `[1]` while
   misstating what `[1]` says is not caught. An NLI or LLM-judge check is the upgrade path.
+  Per-chunk filtering narrows the blast radius — there is no weak passage available to
+  cite — but it does not close this.
+- **Per-chunk filtering can drop supporting detail.** A follow-up chunk that scores just
+  under the threshold is discarded even when it holds the figures the answer needs. Watch
+  for a rise in `model_reported_insufficient_context` fallbacks; the right fix is larger
+  chunks, more overlap, or pulling the neighbours of a qualifying chunk — not a second,
+  lower threshold.
 - **The evidence threshold is hand-set, not tuned on data.** The default (0.32) is a
   reasonable starting point for `text-embedding-3-small`; it should be re-tuned against
   a labelled set before anyone relies on it. See "Verification status".
@@ -314,7 +335,7 @@ Other flags and knobs: `python main.py --rebuild` re-ingests and re-embeds;
 
 Honest accounting of what has actually been run:
 
-- ✅ `pytest -q` — 61 passed. Covers every routing decision with the provider mocked.
+- ✅ `pytest -q` — 65 passed. Covers every routing decision with the provider mocked.
 - ✅ `python -m src.evaluation --offline` — 11/11 asserted cases pass (injection and
   request-form scope, both languages). Retrieval-dependent cases are printed as informational, because
   the lexical stub cannot reproduce semantic similarity; it ranks reasonably but its

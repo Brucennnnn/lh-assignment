@@ -1,10 +1,10 @@
 """Pipeline routing tests. No live LLM or embedding calls."""
 import pytest
 
-from task1.src import agent as agent_mod
-from task1.src import generation
-from task1.src.agent import ANSWERED, BLOCKED_INJECTION, ERROR, FALLBACK, OUT_OF_SCOPE
-from task1.tests.conftest import CHUNK_A, CHUNK_B
+from src import agent as agent_mod
+from src import generation
+from src.agent import ANSWERED, BLOCKED_INJECTION, ERROR, FALLBACK, OUT_OF_SCOPE
+from tests.conftest import CHUNK_A, CHUNK_B
 
 
 @pytest.fixture

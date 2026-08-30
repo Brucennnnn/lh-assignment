@@ -1,4 +1,4 @@
-from task1.src import ingestion
+from src import ingestion
 
 RAW = """---
 id: doc_042

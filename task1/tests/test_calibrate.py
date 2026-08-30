@@ -1,8 +1,8 @@
 """The calibration script's decision logic. Pure functions, no provider."""
 import json
 
-from task1.src import calibrate
-from task1.src import config
+from src import calibrate
+from src import config
 
 
 def test_rank_of_expected_finds_first_matching_document():

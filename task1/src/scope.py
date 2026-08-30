@@ -64,6 +64,8 @@ COVERED_DOMAINS = [
     "พนักงานใหม่ ทดลองงาน สัญญาจ้าง ปฐมนิเทศ",
     "HR policy, payroll, benefits, insurance, working hours, performance review, "
     "นโยบายบุคคล เงินเดือน สวัสดิการ ประกัน เวลาทำงาน ประเมินผล",
+    "workplace conduct, dress code, office facilities, parking, desk and seating, "
+    "ระเบียบการแต่งกาย เครื่องแบบ สถานที่ทำงาน ที่จอดรถ",
     "internal banking operations, branch procedures, compliance, approval limits, "
     "การปฏิบัติงานภายใน สาขา การกำกับดูแล อำนาจอนุมัติ",
 ]

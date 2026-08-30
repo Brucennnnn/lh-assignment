@@ -1,18 +1,9 @@
 """Evaluation set covering the safety and reliability boundaries.
 
-    python -m src.evaluation             # uses the real provider (needs a key)
-    python -m src.evaluation --offline   # deterministic stub, no API key needed
+    python -m src.evaluation    # needs OPENAI_API_KEY
 """
-import argparse
-
-from . import agent as agent_mod, config, ingestion
-from . import llm
+from . import agent as agent_mod, ingestion
 from .agent import ANSWERED, BLOCKED_INJECTION, FALLBACK, OUT_OF_SCOPE
-
-# Offline mode swaps in a lexical stub for embeddings, which cannot reproduce the
-# semantic separation the real model gives. Only the categories that do not depend
-# on embedding quality are asserted there; the rest are reported for information.
-ASSERTED_OFFLINE = {"injection", "out_of_scope"}
 
 CASES = [
     # (category, query, accepted statuses)
@@ -51,33 +42,22 @@ CASES = [
 ]
 
 
-def run(offline: bool = False) -> int:
-    if offline:
-        llm.use_stub()
-        config.apply_stub_thresholds()
-        store = ingestion.build_index(persist=False)
-    else:
-        store = ingestion.load_index()
-
+def run() -> int:
+    store = ingestion.load_index()
     bot = agent_mod.Agent(store)
     failures = asserted = 0
-    if offline:
-        print("OFFLINE MODE: embeddings are a lexical stub. Only "
-              f"{sorted(ASSERTED_OFFLINE)} are asserted; retrieval-dependent cases "
-              "are informational. Run without --offline for the full set.\n")
     print(f"{'category':<16} {'result':<8} {'status':<18} {'conf':>6}  query")
     print("-" * 100)
     for category, query, accepted in CASES:
         out = bot.answer(query)
         ok = out["status"] in accepted
-        counted = not offline or category in ASSERTED_OFFLINE
-        asserted += counted
-        failures += counted and not ok
-        result = ("PASS" if ok else "FAIL") if counted else "info"
+        asserted += 1
+        failures += not ok
+        result = "PASS" if ok else "FAIL"
         conf = f"{out['confidence']:.3f}" if out["confidence"] is not None else "  -  "
         print(f"{category:<16} {result:<8} {out['status']:<18} "
               f"{conf:>6}  {query[:52]}")
-        if counted and not ok:
+        if not ok:
             print(f"{'':<16} expected one of {sorted(accepted)}")
         if out["sources"]:
             print(f"{'':<16} sources: "
@@ -95,7 +75,4 @@ def run(offline: bool = False) -> int:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--offline", action="store_true",
-                        help="use the deterministic stub instead of the OpenAI API")
-    raise SystemExit(run(parser.parse_args().offline))
+    raise SystemExit(run())

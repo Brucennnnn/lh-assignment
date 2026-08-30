@@ -8,6 +8,7 @@ Scope is settled before retrieval and without consulting the corpus, so
 outcomes. The second is logged as a content gap; the list of those is the
 knowledge base's to-do list.
 """
+import re
 import time
 import uuid
 
@@ -88,7 +89,11 @@ class Agent:
             return {"answer": scope.REJECTION_MESSAGE}
 
         # One embedding call, used for the topic check and then for retrieval.
-        query_vector = llm.embed([query])[0]
+        # ponytail: non-Latin queries are translated instead of indexing the
+        # corpus twice. Add a multilingual embedding model if the volume grows.
+        search_text = llm.translate(query) if re.search(r"[^\x00-\x7f]", query) else query
+        record["search_text"] = search_text
+        query_vector = llm.embed([search_text])[0]
 
         reason = scope.classify_domain(query_vector)
         if reason:
@@ -117,7 +122,10 @@ class Agent:
             record["status"] = FALLBACK
             return {"answer": generation.FALLBACK_MESSAGE}
 
-        answer, failure = generation.generate(query, evidence)
+        answer, failure = generation.generate(
+            query if search_text == query else f"{query}\n(in English: {search_text})",
+            evidence,
+        )
         if failure:
             record["fallback"] = True
             record["fallback_reason"] = failure

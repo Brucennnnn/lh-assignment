@@ -7,13 +7,61 @@ covered by the corpus.
 
 Scope is the prototype described in `TASK.md`. It is not production software.
 
-**Take-home deliverables**
+This repository is **Task 1 — Technical implementation**. Tasks 2 and 3 are separate
+written deliverables and are not part of this repo.
 
-| Task | Deliverable |
-|---|---|
-| 1 — Technical implementation | This repository (see below) |
-| 2 — System design & trade-off analysis | [`docs/architecture.md`](docs/architecture.md) |
-| 3 — User scenario & expectation management | [`docs/executive-summary.md`](docs/executive-summary.md) |
+---
+
+## Quick start
+
+Needs Python 3.10+ and an OpenAI API key.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env        # then put a real OPENAI_API_KEY in .env
+```
+
+Ask it something. The index is built and cached on first run:
+
+```bash
+python main.py
+```
+
+```text
+> What is the annual leave entitlement?
+
+Permanent employees are entitled to annual leave based on length of service as follows:
+
+- Less than 1 year of service: 6 working days, accrued at 0.5 days per completed month.
+- 1 to 4 years of service: 12 working days per calendar year.
+- 5 to 9 years of service: 15 working days per calendar year.
+- 10 or more years of service: 18 working days per calendar year.
+
+Annual leave is granted per calendar year and resets on 1 January [1].
+
+Sources:
+- Employee Leave Policy — leave_policy.md
+
+[answered | request_id=req_b2885693f351 | confidence=0.6259]
+```
+
+Then prove the refusals work — 21 cases across in-scope, out-of-scope, injection and
+low-evidence:
+
+```bash
+python -m src.evaluation
+```
+
+No key to hand? The test suite mocks the provider and covers every routing decision:
+
+```bash
+pytest -q
+```
+
+Full command surface and tunables: [§7 Running locally](#7-running-locally).
 
 ---
 
@@ -48,6 +96,9 @@ Scope: topic               scope.classify_domain()        -- nearest-centroid vs
     |                      written remit; still no corpus
     |                      off-topic -> "This question is outside the scope..."
     v
+Query translation          llm.translate()                -- non-Latin queries only;
+    |                      the corpus and the threshold are English
+    v
 Retrieval                  retrieval.retrieve()           -- cosine top-k + metadata
     |
     v
@@ -73,7 +124,7 @@ and writes exactly one log record. There is one pipeline, no agent loop, no tool
 | File | Responsibility |
 |---|---|
 | `src/config.py` | All tunable values, env-driven with defaults |
-| `src/llm.py` | OpenAI embed/complete, plus the offline stub |
+| `src/llm.py` | OpenAI embed/complete, and query translation |
 | `src/ingestion.py` | Load front matter + body, chunk, attach metadata, embed |
 | `src/store.py` | In-memory vector store (numpy matrix + dot product) |
 | `src/retrieval.py` | Top-k search, confidence score, threshold check |
@@ -110,10 +161,17 @@ to it.
 ## 3. Technology choices
 
 **OpenAI `text-embedding-3-small` + `gpt-4o-mini`** — one provider, one key, one SDK.
-The realistic alternative was local embeddings via `sentence-transformers`, which
-pulls in torch (~2 GB) and slows a clean install to minutes, for retrieval quality
-that is not better on this corpus. Both models are the cheap tier; nothing here needs
-a frontier model.
+Both are the cheap tier; nothing here needs a frontier model. The realistic alternative
+was local multilingual embeddings (`bge-m3`, `multilingual-e5`, `nomic-embed-text-v2`),
+which pull in torch or a model server for an English corpus this small. That trade would
+change if Thai-language traffic were real rather than incidental — see "Mixed-language
+queries" below for the measurements behind that call.
+
+**Query translation instead of a second index.** Non-Latin queries are translated to
+English before embedding rather than indexing the corpus in both languages. One extra
+LLM call on those queries buys two things: the index stays single-source, and a cited
+passage is always the real policy document rather than a machine translation of it —
+which matters when the citation is the audit trail.
 
 **numpy array instead of a vector database.** The corpus is 9 documents and 24 chunks.
 Cosine similarity over a normalised matrix is one line (`self.vectors @ query_vector`)
@@ -158,6 +216,22 @@ starts to. Two checks, both before retrieval:
 `COVERED_DOMAINS` is a written remit that changes when the remit changes. It is
 deliberately *not* derived from `data/`, so adding a document never silently widens
 the scope, and removing one never narrows it.
+
+**Mixed-language queries.** The corpus is English; the users are not. A Thai question
+against English chunks scored 0.196 and retrieved the wrong document, so every Thai
+query fell back. The cause was measured before anything was changed:
+
+| Pair | Cosine |
+|---|---|
+| Thai question vs. its own English translation | 0.121 |
+| Two unrelated English questions | 0.264 |
+
+Signal below noise: under `text-embedding-3-small`, language separates the vectors more
+strongly than meaning does. Lowering `RETRIEVAL_THRESHOLD` was therefore the wrong fix —
+it would have admitted the wrong document at a lower score and weakened the one gate the
+whole design rests on. The fix is at the query layer: `llm.translate()` runs before
+embedding, and the original question is passed to generation alongside the translation
+so the answer still addresses what was asked.
 
 **Evidence threshold and fallback.** One number with one meaning, applied **per chunk**:
 `RETRIEVAL_THRESHOLD` (0.32) is the bar for "strong enough to answer from".
@@ -283,15 +357,22 @@ each, owned by the SMEs for each domain, before trusting the numbers.
 
 - **Mock knowledge base.** 9 documents written for this exercise. Retrieval quality on
   a real corpus of thousands of documents is a different problem.
-- **Injection detection is pattern-based.** It catches the obvious phrasings listed in
-  the task. It will not catch paraphrase ("what were you told before this conversation
-  started"), non-English phrasing, base64 or unicode obfuscation, or multi-turn
-  manipulation. A production system would combine patterns with a classifier and
+- **Injection detection is pattern-based, and runs before translation.** It catches the
+  obvious phrasings listed in the task. It will not catch paraphrase ("what were you told
+  before this conversation started"), base64 or unicode obfuscation, or multi-turn
+  manipulation. Note the ordering specifically: the guardrail matches the raw query, so a
+  Thai-language injection is not matched even though the pipeline can now read Thai.
+  Moving the guard after `llm.translate()` would close that, at the cost of one API call
+  before the cheapest rejection in the pipeline. A production system would combine patterns with a classifier and
   privilege separation, and would treat the document corpus itself as untrusted input.
 - **Out-of-scope detection is a regex deny-list plus nearest-centroid topic matching.**
   A creative-writing request phrased unusually passes the deny-list and then depends on
   the topic centroids, which are short hand-written descriptions rather than trained
   boundaries.
+- **Translation is a dependency, not a free win.** Non-Latin queries cost one extra LLM
+  call (~300 ms) and inherit its mistakes: "เบิกเงินยังไง" translates to "how to withdraw
+  money", which does not match the reimbursement policy the asker meant. A multilingual
+  embedding model removes both problems and adds a re-index and a re-calibration.
 - **Confidence is a heuristic**, not a calibrated probability: it is the top-1 cosine
   similarity, which measures "does the corpus contain something that looks like this
   question", not "is this answer correct".
@@ -304,10 +385,11 @@ each, owned by the SMEs for each domain, before trusting the numbers.
   for a rise in `model_reported_insufficient_context` fallbacks; the right fix is larger
   chunks, more overlap, or pulling the neighbours of a qualifying chunk — not a second,
   lower threshold.
-- **The evidence threshold and `TOP_K` are still hand-set.** `python -m src.calibrate`
-  replaces both with measurements, but it has only ever been run against the offline
-  stub, whose score scale is not the real model's. Both remain guesses until it is run
-  with a key. See "Verification status".
+- **The evidence threshold and `TOP_K` disagree with the calibration.** `python -m
+  src.calibrate` has been run against the real provider and recommends `0.42` and
+  `k=2`; the config still ships `0.32` and `4`. The recommendation has not been applied
+  because 24 labelled positives and 12 negatives is too small a sample to move a safety
+  threshold on, and the labels belong to the domain owners. See "Verification status".
 - **No conversation memory.** Each query is independent; follow-ups like "and for
   managers?" will not resolve.
 - **Prototype-level everything else**: no authentication, no authorisation or
@@ -319,72 +401,54 @@ each, owned by the SMEs for each domain, before trusting the numbers.
 
 ## 7. Running locally
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+Setup and first run are at the top: [Quick start](#quick-start). This is the full
+command surface.
 
-cp .env.example .env        # then put a real OPENAI_API_KEY in .env
-```
+| Command | Needs a key | What it does |
+|---|---|---|
+| `python main.py` | yes | Interactive prompt against the cached index |
+| `python main.py --rebuild` | yes | Re-ingest, re-chunk and re-embed, overwriting `data/index.pkl` |
+| `python -m src.evaluation` | yes | The 21-case evaluation set; exit code 1 if any case fails |
+| `python -m src.calibrate` | yes | Sweep `RETRIEVAL_THRESHOLD` and `TOP_K` against the labelled set |
+| `python -m src.calibrate --target-far 0.02` | yes | Same, allowing a 2% false-answer rate instead of 1% |
+| `pytest -q` | no | 72 tests; the provider is monkeypatched at `src.llm.embed` |
 
-Interactive demo — builds and caches the index on first run:
+Everything tunable is an environment variable, defaulted in `src/config.py` and
+documented in `.env.example`:
 
-```bash
-python main.py
-```
+| Variable | Default | Effect |
+|---|---|---|
+| `OPENAI_API_KEY` | — | Required by every command except `pytest` |
+| `EMBEDDING_MODEL` | `text-embedding-3-small` | Change and `--rebuild`; the threshold needs recalibrating |
+| `LLM_MODEL` | `gpt-4o-mini` | Generation and query translation |
+| `RETRIEVAL_THRESHOLD` | `0.32` | The evidence bar, applied per chunk |
+| `TOP_K` | `4` | Maximum chunks retrieved, not a quota |
+| `CHUNK_SIZE` | `700` | Characters per chunk; `--rebuild` after changing |
+| `LOG_STDOUT` | `0` | Set to `1` to echo each JSON request log line to the terminal |
+| `INDEX_PATH` / `LOG_PATH` | `data/index.pkl`, `logs/rag.jsonl` | Relocate the artefacts |
 
-```text
-> What is the annual leave entitlement?
-
-Employees with 1 to 4 years of service receive 12 working days per calendar year,
-rising to 15 days at 5 years and 18 days at 10 years. [1]
-
-Sources:
-- Employee Leave Policy — leave_policy.md
-
-[answered | request_id=req_a1b2c3d4e5f6 | confidence=0.61]
-```
-
-Evaluation set:
-
-```bash
-python -m src.evaluation
-```
-
-Tests (no API key needed):
+Reading the logs — the request id printed after every answer is the join key:
 
 ```bash
-pytest -q
+grep req_b2885693f351 logs/rag.jsonl | jq
+grep '"content_gap": true' logs/rag.jsonl | jq -r .query | sort | uniq -c | sort -rn
 ```
-
-Without a key — exercises the guardrail, scope, fallback and logging paths using a
-deterministic lexical stub in place of the embedding and chat models:
-
-```bash
-python main.py --offline
-python -m src.evaluation --offline
-```
-
-Other flags and knobs: `python main.py --rebuild` re-ingests and re-embeds;
-`LOG_STDOUT=1` echoes the JSON request log; every threshold and model name in
-`.env.example` can be overridden.
 
 ### Verification status
 
 Honest accounting of what has actually been run:
 
 - ✅ `pytest -q` — 72 passed. Covers every routing decision with the provider mocked.
-- ✅ `python -m src.evaluation --offline` — 11/11 asserted cases pass (injection and
-  request-form scope, both languages). Retrieval-dependent cases are printed as informational, because
-  the lexical stub cannot reproduce semantic similarity; it ranks reasonably but its
-  score scale is compressed, so it refuses in-scope questions too.
-- ✅ `python main.py --offline` — interactive loop, logging, and all three refusal
-  paths confirmed end to end.
-- ⚠️ **The live OpenAI path has not been executed** — no API key was available in the
-  development environment. The generation prompt, grounding check and the 0.20 / 0.32
-  thresholds are reasoned, not measured. First run with a real key: check
-  `python -m src.evaluation` and adjust `RETRIEVAL_THRESHOLD` in `.env` against the
-  printed confidence column.
+- ✅ `python -m src.evaluation` — 21/21 against `text-embedding-3-small` and
+  `gpt-4o-mini`. Covers in-scope answers, both request-form and topic scope rejection in
+  English and Thai, injection, and low-evidence fallback.
+- ✅ `python main.py` — interactive loop, source attribution, logging, and all four
+  terminating branches confirmed end to end against the live provider.
+- ✅ `python -m src.calibrate` — run against the live provider; see "Limitations" for
+  why its recommendation has not been applied.
+- ⚠️ **Grounding is a citation-presence check, not entailment.** A cited answer that
+  misreads its own passage is not caught. Untested, because testing it needs labelled
+  hallucinations, which this prototype does not have.
 
 ---
 
@@ -407,7 +471,11 @@ readable by everyone.
    as the hand-written domain descriptions.
 3. Confidence is the top-1 score, not a mean of top-k. A mean is dragged down by the
    weak tail of every result set; one strongly-matching chunk is enough to answer from.
-4. An offline stub provider was added so tests and a smoke demo run with no key. It is
-   confined to `src/llm.py` and never used by the default path.
+4. Non-Latin queries are translated to English before embedding rather than indexing
+   the corpus in both languages, so a cited source is always the real policy document
+   and never a machine translation. Measured first: a Thai question and its own English
+   translation score 0.121 against each other under `text-embedding-3-small`, while two
+   unrelated English questions score 0.264 — the model separates language more strongly
+   than meaning, so lowering the threshold would not have fixed it.
 5. Documents carry their metadata in `---` front matter rather than a separate manifest,
    so metadata cannot drift away from the content it describes.

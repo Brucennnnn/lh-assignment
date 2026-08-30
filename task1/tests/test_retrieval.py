@@ -1,7 +1,7 @@
 import numpy as np
 
-from task1.src import retrieval
-from task1.src import config
+from src import retrieval
+from src import config
 
 
 def test_top_result_is_most_similar(store, query_vector):

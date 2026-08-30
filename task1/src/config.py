@@ -23,12 +23,3 @@ TOP_K = int(os.getenv("TOP_K", "4"))
 # without it - see src/scope.py.
 # Tuned by hand against text-embedding-3-small; see README "Thresholds".
 RETRIEVAL_THRESHOLD = float(os.getenv("RETRIEVAL_THRESHOLD", "0.32"))
-
-# The offline stub in llm.py scores on lexical overlap, so its similarity scale
-# differs from the embedding model's. --offline swaps in these bands instead.
-STUB_RETRIEVAL_THRESHOLD = float(os.getenv("STUB_RETRIEVAL_THRESHOLD", "0.42"))
-
-
-def apply_stub_thresholds() -> None:
-    global RETRIEVAL_THRESHOLD
-    RETRIEVAL_THRESHOLD = STUB_RETRIEVAL_THRESHOLD

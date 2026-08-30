@@ -1,7 +1,6 @@
 """Pick RETRIEVAL_THRESHOLD and TOP_K from data instead of guessing.
 
-    python -m src.calibrate                    # real provider
-    python -m src.calibrate --offline          # stub, only checks the script runs
+    python -m src.calibrate                    # needs OPENAI_API_KEY
     python -m src.calibrate --target-far 0.02  # allow a 2% false-answer rate
 
 Reads `data/calibration_set.json`: questions the corpus provably answers
@@ -82,14 +81,8 @@ def recommend(rows, target_far: float) -> tuple[float, float, float] | None:
     return None
 
 
-def run(offline: bool = False, target_far: float = 0.01) -> int:
-    if offline:
-        llm.use_stub()
-        config.apply_stub_thresholds()
-        store = ingestion.build_index(persist=False)
-    else:
-        store = ingestion.load_index()
-
+def run(target_far: float = 0.01) -> int:
+    store = ingestion.load_index()
     positives, negatives = load_set()
     print(f"corpus: {len(store.chunks)} chunks · "
           f"{len(positives)} answerable questions · {len(negatives)} unanswerable\n")
@@ -166,10 +159,7 @@ def run(offline: bool = False, target_far: float = 0.01) -> int:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--offline", action="store_true",
-                        help="use the deterministic stub (checks the script runs, "
-                             "cannot produce usable numbers)")
     parser.add_argument("--target-far", type=float, default=0.01,
                         help="acceptable false-answer rate on unanswerable questions")
     args = parser.parse_args()
-    raise SystemExit(run(args.offline, args.target_far))
+    raise SystemExit(run(args.target_far))

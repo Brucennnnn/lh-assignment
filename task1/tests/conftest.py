@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from task1.src.store import VectorStore
+from src.store import VectorStore
 
 # Two orthogonal unit vectors, so cosine scores in tests are exact and readable.
 CHUNK_A = {"chunk_id": "doc_001_c00", "content": "Employees get 12 days of annual leave.",

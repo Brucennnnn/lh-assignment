@@ -3,7 +3,7 @@ regardless of what happens to be indexed."""
 import numpy as np
 import pytest
 
-from task1.src import scope
+from src import scope
 
 WRONG_FORM = [
     "What's the weather tomorrow?",

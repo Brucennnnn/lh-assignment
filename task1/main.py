@@ -1,28 +1,22 @@
 """Interactive demo.
 
-    python main.py                # ask questions against the real provider
-    python main.py --offline      # deterministic stub, no API key needed
+    python main.py                # ask questions against the knowledge base
     python main.py --rebuild      # re-ingest and re-embed the knowledge base
+
+Needs OPENAI_API_KEY. Copy .env.example to .env first.
 """
 import argparse
 
-from task1.src import llm
-from task1.src.agent import Agent
-from task1.src import config, ingestion
+from src.agent import Agent
+from src import ingestion
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--offline", action="store_true", help="use the deterministic stub")
     parser.add_argument("--rebuild", action="store_true", help="rebuild the vector index")
     args = parser.parse_args()
 
-    if args.offline:
-        llm.use_stub()
-        config.apply_stub_thresholds()
-        store = ingestion.build_index(persist=False)
-    else:
-        store = ingestion.load_index(rebuild=args.rebuild)
+    store = ingestion.load_index(rebuild=args.rebuild)
 
     bot = Agent(store)
     print(f"LH Bank internal knowledge assistant ({len(store.chunks)} chunks indexed). "

@@ -2,6 +2,7 @@
 import pytest
 
 from src import agent as agent_mod
+from src import config
 from src import generation
 from src.agent import ANSWERED, BLOCKED_INJECTION, ERROR, FALLBACK, OUT_OF_SCOPE
 from tests.conftest import CHUNK_A, CHUNK_B
@@ -14,8 +15,10 @@ def bot(store, monkeypatch, tmp_path, stub_embed, in_domain):
     return agent_mod.Agent(store)
 
 
-def stub_retrieval(monkeypatch, score, chunks=(CHUNK_A, CHUNK_B)):
-    results = [{**c, "score": score if i == 0 else score / 2} for i, c in enumerate(chunks)]
+def stub_retrieval(monkeypatch, score, chunks=(CHUNK_A, CHUNK_B), fade=0.5):
+    """Chunk 0 scores `score`; the rest score `score * fade`. fade=1.0 when a test
+    needs every chunk to clear the evidence threshold."""
+    results = [{**c, "score": score if i == 0 else score * fade} for i, c in enumerate(chunks)]
     monkeypatch.setattr("src.retrieval.retrieve", lambda *a, **k: results)
     return results
 
@@ -85,9 +88,10 @@ def test_weak_evidence_triggers_fallback(bot, monkeypatch):
 
 
 def test_noise_below_threshold_is_never_shown_to_the_model(bot, monkeypatch):
-    """Top-4 of 0.32 / 0.01 / 0.01 / 0.01: only the qualifying chunk is passed,
-    so there is no junk passage left for the model to cite."""
-    weak = [{**CHUNK_A, "score": 0.32}] + [{**CHUNK_B, "score": 0.01} for _ in range(3)]
+    """Top-1 exactly at the threshold, the rest noise: only the qualifying chunk is
+    passed, so there is no junk passage left for the model to cite."""
+    t = config.RETRIEVAL_THRESHOLD
+    weak = [{**CHUNK_A, "score": t}] + [{**CHUNK_B, "score": 0.01} for _ in range(3)]
     monkeypatch.setattr("src.retrieval.retrieve", lambda *a, **k: weak)
 
     seen = {}
@@ -101,7 +105,7 @@ def test_noise_below_threshold_is_never_shown_to_the_model(bot, monkeypatch):
     assert out["status"] == ANSWERED
     assert out["trace"]["support_count"] == 1
     assert "[2]" not in seen["prompt"]                       # noise never rendered
-    assert out["trace"]["retrieval_scores"] == [0.32, 0.01, 0.01, 0.01]   # log keeps them
+    assert out["trace"]["retrieval_scores"] == [t, 0.01, 0.01, 0.01]   # log keeps them
     assert [s["source"] for s in out["sources"]] == ["leave_policy.md"]
 
 
@@ -127,7 +131,7 @@ def test_successful_answer_with_source_attribution(bot, monkeypatch):
 
 
 def test_only_cited_sources_are_attributed(bot, monkeypatch):
-    stub_retrieval(monkeypatch, score=0.81)
+    stub_retrieval(monkeypatch, score=0.81, fade=1.0)   # both chunks must qualify
     stub_llm(monkeypatch, "Claims are submitted within 30 days. [2]")
     out = bot.answer("How do I claim expenses?")
     assert [s["source"] for s in out["sources"]] == ["expense_policy.md"]

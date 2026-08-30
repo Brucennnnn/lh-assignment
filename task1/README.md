@@ -142,7 +142,8 @@ and writes exactly one log record. There is one pipeline, no agent loop, no tool
 data/documents/*.md, data/chats/*.txt
     -> parse `---` front matter (id, source, type, department, title)
     -> split on blank lines, pack paragraphs up to CHUNK_SIZE (700 chars)
-    -> prefix the current markdown heading to each chunk
+    -> end a chunk at a heading as well as at CHUNK_SIZE
+    -> prefix that heading to the chunk
     -> attach document metadata to every chunk
     -> embed with text-embedding-3-small
     -> pickle to data/index.pkl (rebuilt with `python main.py --rebuild`)
@@ -157,6 +158,14 @@ were actually supplied, so a source cannot be fabricated.
 The heading prefix matters more than it looks: a chunk that is a bare bullet list of
 day counts is unretrievable until the words "Annual Leave Entitlement" are attached
 to it.
+
+Chunks end at headings for the same reason. Breaking on size alone let one chunk
+swallow three sections of `leave_policy.md` while carrying only the first section's
+heading — sick-leave rules stored under "Carry Over", and two of the document's five
+headings written nowhere at all. That is a bad label for retrieval and a citation that
+points at the wrong paragraph. Ending the chunk at each heading took the corpus from 24
+chunks to 36 and made the answerable and unanswerable score distributions stop
+overlapping; see "Calibrating the threshold".
 
 ## 3. Technology choices
 
@@ -173,7 +182,7 @@ LLM call on those queries buys two things: the index stays single-source, and a 
 passage is always the real policy document rather than a machine translation of it —
 which matters when the citation is the audit trail.
 
-**numpy array instead of a vector database.** The corpus is 9 documents and 24 chunks.
+**numpy array instead of a vector database.** The corpus is 9 documents and 36 chunks.
 Cosine similarity over a normalised matrix is one line (`self.vectors @ query_vector`)
 and returns exactly what Chroma or FAISS would at this size. A vector database earns
 its dependency at a scale this prototype is explicitly told not to optimise for. The
@@ -234,7 +243,8 @@ embedding, and the original question is passed to generation alongside the trans
 so the answer still addresses what was asked.
 
 **Evidence threshold and fallback.** One number with one meaning, applied **per chunk**:
-`RETRIEVAL_THRESHOLD` (0.32) is the bar for "strong enough to answer from".
+`RETRIEVAL_THRESHOLD` (0.44, measured — see "Calibrating the threshold") is the bar
+for "strong enough to answer from".
 
 | Situation | Decision |
 |---|---|
@@ -243,7 +253,7 @@ so the answer still addresses what was asked.
 
 `TOP_K` is a maximum, not a quota. A chunk too weak to justify answering is also too
 weak to inform the answer, so it never reaches the prompt. This matters more than it
-sounds: given top-4 scores of `0.32 / 0.01 / 0.01 / 0.01`, passing all four would render
+sounds: given top-4 scores of `0.44 / 0.01 / 0.01 / 0.01`, passing all four would render
 three pieces of noise as `[2] [3] [4]` with exactly the same authority as `[1]` — the
 model cannot tell them apart, and the grounding check cannot either, since citing junk
 satisfies "did it cite something". Filtering first means there is no junk left to cite.
@@ -319,8 +329,7 @@ LLM and embedding calls mocked, so no test needs a key or a network:
 
 ### Calibrating the threshold
 
-`RETRIEVAL_THRESHOLD` and `TOP_K` are currently guesses. `src/calibrate.py` replaces
-them with measurements:
+`RETRIEVAL_THRESHOLD` is measured, not guessed. `src/calibrate.py` produces it:
 
 ```bash
 python -m src.calibrate                    # needs a key
@@ -385,11 +394,16 @@ each, owned by the SMEs for each domain, before trusting the numbers.
   for a rise in `model_reported_insufficient_context` fallbacks; the right fix is larger
   chunks, more overlap, or pulling the neighbours of a qualifying chunk — not a second,
   lower threshold.
-- **The evidence threshold and `TOP_K` disagree with the calibration.** `python -m
-  src.calibrate` has been run against the real provider and recommends `0.42` and
-  `k=2`; the config still ships `0.32` and `4`. The recommendation has not been applied
-  because 24 labelled positives and 12 negatives is too small a sample to move a safety
-  threshold on, and the labels belong to the domain owners. See "Verification status".
+- **The calibration rests on 36 labelled questions.** 24 positives and 12 negatives is
+  a starter set, and `data/calibration_set.json` says so in its own header: expand to
+  50-100 of each before trusting the numbers. `RETRIEVAL_THRESHOLD` currently sits at
+  the bottom edge of the separating band (0.43-0.48), so an unseen negative scoring
+  0.45 would slip through where a mid-band value would have caught it. The labels
+  belong to the domain owners, not to engineering.
+- **`TOP_K` is still hand-set at 4.** `Recall@k` reaches 100% at k=1, so 4 is more than
+  the measurement calls for. It is kept because per-chunk filtering made `TOP_K` a
+  ceiling rather than a quota — a topic split across two adjacent chunks benefits, and
+  a weak fourth chunk is discarded anyway.
 - **No conversation memory.** Each query is independent; follow-ups like "and for
   managers?" will not resolve.
 - **Prototype-level everything else**: no authentication, no authorisation or
@@ -421,7 +435,7 @@ documented in `.env.example`:
 | `OPENAI_API_KEY` | — | Required by every command except `pytest` |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | Change and `--rebuild`; the threshold needs recalibrating |
 | `LLM_MODEL` | `gpt-4o-mini` | Generation and query translation |
-| `RETRIEVAL_THRESHOLD` | `0.32` | The evidence bar, applied per chunk |
+| `RETRIEVAL_THRESHOLD` | `0.44` | The evidence bar, applied per chunk |
 | `TOP_K` | `4` | Maximum chunks retrieved, not a quota |
 | `CHUNK_SIZE` | `700` | Characters per chunk; `--rebuild` after changing |
 | `LOG_STDOUT` | `0` | Set to `1` to echo each JSON request log line to the terminal |
@@ -444,8 +458,10 @@ Honest accounting of what has actually been run:
   English and Thai, injection, and low-evidence fallback.
 - ✅ `python main.py` — interactive loop, source attribution, logging, and all four
   terminating branches confirmed end to end against the live provider.
-- ✅ `python -m src.calibrate` — run against the live provider; see "Limitations" for
-  why its recommendation has not been applied.
+- ✅ `python -m src.calibrate` — run against the live provider. Its recommendation is
+  applied: `RETRIEVAL_THRESHOLD` is 0.44, the lowest value that answers 100% of the
+  labelled answerable questions with 0% false answers. See "Limitations" for what the
+  36-question sample does and does not support.
 - ⚠️ **Grounding is a citation-presence check, not entailment.** A cited answer that
   misreads its own passage is not caught. Untested, because testing it needs labelled
   hallucinations, which this prototype does not have.

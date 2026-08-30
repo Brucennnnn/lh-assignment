@@ -35,6 +35,11 @@ def chunk_document(doc: dict) -> list[dict]:
 
     Headings are repeated into every chunk so a chunk like a bare bullet list
     still carries the words "Annual Leave Entitlement" for retrieval.
+
+    A chunk ends at a heading as well as at CHUNK_SIZE. Splitting on size alone
+    let one chunk span three sections while carrying only the first section's
+    heading - sick-leave rules filed under "Carry Over" - which is both a bad
+    label for retrieval and a citation that points at the wrong paragraph.
     """
     chunks, buf, heading = [], "", ""
     for para in re.split(r"\n\s*\n", doc["content"]):
@@ -42,7 +47,11 @@ def chunk_document(doc: dict) -> list[dict]:
         if not para:
             continue
         if para.startswith("#"):
-            heading = para.lstrip("# ").strip()
+            new_heading = para.lstrip("# ").strip()
+            if buf and new_heading != heading:
+                chunks.append(buf)
+                buf = ""
+            heading = new_heading
             continue
         if buf and len(buf) + len(para) > config.CHUNK_SIZE:
             chunks.append(buf)

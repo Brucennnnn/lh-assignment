@@ -39,9 +39,15 @@ def test_qualifying_empty_below_threshold(store, query_vector):
 
 
 def test_weak_chunks_never_reach_the_model(store, query_vector):
-    """The 0.32 / 0.01 / 0.01 case: one chunk qualifies, the noise is dropped."""
-    results = [{"score": 0.32}, {"score": 0.01}, {"score": 0.01}, {"score": 0.01}]
-    assert retrieval.qualifying(results) == [{"score": 0.32}]
+    """One chunk exactly at the threshold, the rest noise: only the first survives.
+
+    Written against config.RETRIEVAL_THRESHOLD rather than a literal, because the
+    threshold is a calibrated business number - a test pinned to its current value
+    breaks every time the corpus is re-measured, for no gain.
+    """
+    t = config.RETRIEVAL_THRESHOLD
+    results = [{"score": t}, {"score": 0.01}, {"score": 0.01}, {"score": 0.01}]
+    assert retrieval.qualifying(results) == [{"score": t}]
 
 
 def test_threshold_is_inclusive(store):

@@ -21,5 +21,8 @@ TOP_K = int(os.getenv("TOP_K", "4"))
 # that covers the question, so the answer is a fallback rather than a guess.
 # This is the ONLY score-based decision in the pipeline. Scope is decided
 # without it - see src/scope.py.
-# Tuned by hand against text-embedding-3-small; see README "Thresholds".
-RETRIEVAL_THRESHOLD = float(os.getenv("RETRIEVAL_THRESHOLD", "0.32"))
+# Measured, not guessed: `python -m src.calibrate` against the labelled set.
+# The answerable and unanswerable score distributions do not overlap, so any
+# value in 0.43-0.48 separates them; this is the lowest, per the tool's rule
+# that every step higher refuses more real questions for no further safety.
+RETRIEVAL_THRESHOLD = float(os.getenv("RETRIEVAL_THRESHOLD", "0.44"))
